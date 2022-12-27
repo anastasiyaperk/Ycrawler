@@ -17,5 +17,5 @@ env.bak/
 venv.bak/
 
 .idea/
-.source_data/
-.data/
+source_data/
+data/
