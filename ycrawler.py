@@ -1,11 +1,13 @@
 import argparse
 import asyncio
 from asyncio import AbstractEventLoop
+import csv
 from datetime import datetime
 import html
 import logging
 import os
 import re
+from typing import List
 
 import aiohttp
 from aiohttp import ClientSession
@@ -17,7 +19,7 @@ TOP_STORIES_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 FETCH_TIMEOUT = 10
 REFERENCES_REGEXP = r'<a[^>]* href="([^"]*)"'
 COLLECTED_STORIES = []
-REPORT_FILE = r"report.txt"
+REPORT_FILE = r"report.csv"
 
 logging.basicConfig(format="[%(asctime)s] %(levelname).1s %(message)s", datefmt="%Y.%m.%d %H:%M:%S")
 logger = logging.getLogger()
@@ -41,7 +43,7 @@ class URLFetcher:
             try:
                 async with session.get(url) as response:
                     if dest_dir:
-                        write_to_disk(await response.read(), url, dest_dir)
+                        save_content_to_disk(await response.read(), url, dest_dir)
                     elif get_response:
                         return await response.json()
 
@@ -49,40 +51,63 @@ class URLFetcher:
                 logger.error(f"Timeout error on url: {url}")
 
 
-def write_to_disk(resp_bytes, url, dest_dir):
+def save_content_to_disk(resp_bytes, url, dest_dir):
+    """
+    Save collected from url content to disk
+
+    :param resp_bytes: bytes of content
+    :param url: url
+    :param dest_dir: destination directory
+    :return:
+    """
     if resp_bytes is None:
-        logger.debug('Nothing to save: {}'.format(url))
+        logger.debug(f"Empty content on {url}")
         return
 
     filename = re.sub(r"[?:*<>,; /\\]", r'', url)
-    full_filename = os.path.join(dest_dir, filename[:15])
-    with open(full_filename, 'wb+') as f:
+    full_filename = os.path.join(dest_dir, filename[:20])
+    with open(full_filename, "wb+") as f:
         f.write(resp_bytes)
 
 
-def get_dir_name_for_story(dest_dir, title, story_id):
+def get_path_of_story(dest_dir, story_title, story_id) -> str:
+    """
+    Get path to story directory or create if does not exist
+
+    :param dest_dir: destination dir of all stories
+    :param story_title: story title
+    :param story_id: story id
+    :return: path of story directory
+    """
     dir_name = str(story_id)
     path = os.path.join(dest_dir, dir_name)
     if not os.path.exists(path):
-        create_dir_and_add_to_list(dest_dir, path, title, story_id)
+        # create dir if does nor exist
+        os.makedirs(path)
+        COLLECTED_STORIES.append(story_id)
+        with open(os.path.join(dest_dir, REPORT_FILE), 'a+', encoding='UTF8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([story_id, story_title])
 
     return path
 
 
-def create_dir_and_add_to_list(dest_dir, path, title, story_id):
-    os.makedirs(path)
-    COLLECTED_STORIES.append(story_id)
-    with open(os.path.join(dest_dir, REPORT_FILE), 'w+', encoding="utf-8") as f:
-        f.write('\t'.join([str(story_id), title]) + '\n')
+def load_processed_stories_list(story_dir: str) -> List[int]:
+    """
+    Load processed stories ids from report file
 
-
-def init_list(story_dir):
+    :param story_dir: path to directory with all stories
+    :return: total list of all processed stories ids
+    """
     path_to_file = os.path.join(story_dir, REPORT_FILE)
+    total_ids = []
     if os.path.exists(path_to_file):
-        with open(path_to_file, 'r') as f:
-            return [int(item.split('\t')[0]) for item in f.readlines()]
-    else:
-        return []
+        with open(path_to_file, 'r', encoding='UTF8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                total_ids.append(int(row[0]))
+
+    return total_ids
 
 
 async def get_page_with_references(loop_: AbstractEventLoop,
@@ -111,7 +136,7 @@ async def get_page_with_references(loop_: AbstractEventLoop,
     elif response.get("type") == "story":
         logger.debug("Get story response")
         story_url = response.get("url", STORY_URL_TEMPLATE.format(post_id))
-        story_dir = get_dir_name_for_story(story_dir, response.get("title", "untitled"), post_id)
+        story_dir = get_path_of_story(story_dir, response.get("title", "untitled"), post_id)
         await fetcher.fetch(session, story_url, dest_dir=story_dir)
 
     elif response.get('type') == "comment":
@@ -236,7 +261,7 @@ if __name__ == '__main__':
     fh.setLevel(logging.INFO if not args.verbose else logging.DEBUG)
     logger.addHandler(fh)
 
-    COLLECTED_STORIES = init_list(args.path)
+    COLLECTED_STORIES = load_processed_stories_list(args.path)
 
     logger.info(f"Ycrawler started with options: {args.__dict__}")
     loop = asyncio.get_event_loop()
