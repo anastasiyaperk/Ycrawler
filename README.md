@@ -28,9 +28,10 @@
 2) Активируйте виртуальное окружение: `source venv/bin/activate`
 3) Установите зависимости: `pip install -r requirements.txt`
 
-## Пример запуска
+## Запуск
 
-```
+```shell
+$ python ycrawler.py 
 ```
 
 ## Справка о приложении
